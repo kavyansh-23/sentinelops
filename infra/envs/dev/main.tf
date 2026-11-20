@@ -43,3 +43,20 @@ output "vpc_id" {
 output "alb_url" {
   value = "http://${module.alb.dns_name}"
 }
+
+variable "alert_email" {
+  type    = string
+  default = ""
+}
+
+module "observability" {
+  source = "../../modules/observability"
+
+  name                    = "sentinelops-dev"
+  alb_arn_suffix          = module.alb.alb_arn_suffix
+  target_group_arn_suffix = module.alb.target_group_arn_suffix
+  cluster_name            = module.app.cluster_name
+  service_name            = module.app.service_name
+  log_group_name          = module.app.log_group_name
+  alert_email             = var.alert_email
+}

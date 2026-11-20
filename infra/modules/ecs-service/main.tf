@@ -100,6 +100,10 @@ resource "aws_ecs_service" "this" {
   launch_type                       = "FARGATE"
   health_check_grace_period_seconds = 30
 
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+
   deployment_circuit_breaker {
     enable   = true
     rollback = true
@@ -117,3 +121,4 @@ resource "aws_ecs_service" "this" {
     container_port   = var.container_port
   }
 }
+

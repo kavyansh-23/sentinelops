@@ -81,3 +81,55 @@ output "ecr_repository_url" {
   value = aws_ecr_repository.app.repository_url
 }
 
+
+# ---------- CD deploy user (least privilege) ----------
+resource "aws_iam_user" "deployer" {
+  name = "sentinelops-deployer"
+}
+
+data "aws_iam_policy_document" "deployer" {
+  statement {
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+  statement {
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:InitiateLayerUpload",
+      "ecr:UploadLayerPart",
+      "ecr:CompleteLayerUpload",
+      "ecr:PutImage",
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+    ]
+    resources = [aws_ecr_repository.app.arn]
+  }
+  statement {
+    actions = [
+      "ecs:DescribeServices",
+      "ecs:DescribeTaskDefinition",
+      "ecs:RegisterTaskDefinition",
+      "elasticloadbalancing:DescribeLoadBalancers",
+    ]
+    resources = ["*"]
+  }
+  statement {
+    actions   = ["ecs:UpdateService"]
+    resources = ["arn:aws:ecs:ap-southeast-2:${data.aws_caller_identity.current.account_id}:service/sentinelops-dev-app/sentinelops-dev-app"]
+  }
+  statement {
+    actions   = ["iam:PassRole"]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/sentinelops-dev-app-*"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_user_policy" "deployer" {
+  name   = "deploy-only"
+  user   = aws_iam_user.deployer.name
+  policy = data.aws_iam_policy_document.deployer.json
+}

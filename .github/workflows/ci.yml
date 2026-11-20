@@ -1,4 +1,4 @@
-name: ci
+name: ci-cd
 
 on:
   push:
@@ -7,6 +7,12 @@ on:
 
 permissions:
   contents: read
+
+env:
+  AWS_REGION: ap-southeast-2
+  ECR_REPO: sentinelops-app
+  CLUSTER: sentinelops-dev-app
+  SERVICE: sentinelops-dev-app
 
 jobs:
   terraform-checks:
@@ -41,3 +47,74 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "0"
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [terraform-checks, build-and-scan]
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version
+        run: echo "VER=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        run: |
+          IMAGE=${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}:${VER}
+          docker build -t "$IMAGE" app
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Check whether the service is running
+        id: check
+        run: |
+          ACTIVE=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query "length(services[?status=='ACTIVE'])" --output text 2>/dev/null || echo 0)
+          if [ "$ACTIVE" = "1" ]; then
+            echo "active=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "active=false" >> "$GITHUB_OUTPUT"
+            echo "Service not running (environment destroyed). Image pushed, deploy skipped."
+          fi
+
+      - name: Deploy new task definition
+        if: steps.check.outputs.active == 'true'
+        run: |
+          TD_ARN=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query "services[0].taskDefinition" --output text)
+          aws ecs describe-task-definition --task-definition "$TD_ARN" --query taskDefinition > td.json
+          jq --arg IMG "$IMAGE" --arg VER "$VER" '
+            .containerDefinitions[0].image = $IMG
+            | .containerDefinitions[0].environment |= map(if .name == "APP_VERSION" then .value = $VER else . end)
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)
+          ' td.json > new-td.json
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json file://new-td.json \
+            --query taskDefinition.taskDefinitionArn --output text)
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --task-definition "$NEW_ARN" > /dev/null
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+
+      - name: Smoke test
+        if: steps.check.outputs.active == 'true'
+        run: |
+          DNS=$(aws elbv2 describe-load-balancers --names sentinelops-dev \
+            --query "LoadBalancers[0].DNSName" --output text)
+          for i in $(seq 1 10); do
+            RESP=$(curl -fsS "http://$DNS/" || true)
+            echo "$RESP"
+            echo "$RESP" | grep -q "$VER" && exit 0
+            sleep 10
+          done
+          echo "Smoke test failed: new version not serving (a rollback may have happened)"
+          exit 1

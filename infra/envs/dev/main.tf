@@ -60,3 +60,34 @@ module "observability" {
   log_group_name          = module.app.log_group_name
   alert_email             = var.alert_email
 }
+
+
+variable "llm_provider" {
+  type    = string
+  default = "mock"
+}
+
+variable "llm_model" {
+  type    = string
+  default = ""
+}
+
+data "aws_secretsmanager_secret" "llm" {
+  name = "sentinelops/openai-api-key"
+}
+
+module "agent" {
+  source = "../../modules/agent"
+
+  name                    = "sentinelops-dev"
+  alarm_topic_arn         = module.observability.sns_topic_arn
+  cluster_name            = module.app.cluster_name
+  service_name            = module.app.service_name
+  log_group_name          = module.app.log_group_name
+  alb_arn_suffix          = module.alb.alb_arn_suffix
+  target_group_arn_suffix = module.alb.target_group_arn_suffix
+  llm_secret_arn          = data.aws_secretsmanager_secret.llm.arn
+  llm_provider            = var.llm_provider
+  llm_model               = var.llm_model
+  alert_email             = var.alert_email
+}

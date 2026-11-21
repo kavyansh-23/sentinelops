@@ -133,3 +133,13 @@ resource "aws_iam_user_policy" "deployer" {
   user   = aws_iam_user.deployer.name
   policy = data.aws_iam_policy_document.deployer.json
 }
+
+# ---------- OpenAI API key (value is set by CLI, never in Terraform) ----------
+resource "aws_secretsmanager_secret" "openai" {
+  name                    = "sentinelops/openai-api-key"
+  recovery_window_in_days = 0
+}
+
+output "openai_secret_arn" {
+  value = aws_secretsmanager_secret.openai.arn
+}

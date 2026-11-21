@@ -91,9 +91,6 @@ Request count and 5xx spikes, p95 latency, healthy and unhealthy targets, CPU an
 
 The 5xx-rate alarm moves to ALARM after sustained errors from the `/error` endpoint.
 
-### Alert delivered
-![Alarm email](docs/screenshots/06-alarm-email.png)
-
 SNS delivers the alarm email: two of the last two datapoints were above the 5% threshold.
 
 ### Teardown verified
